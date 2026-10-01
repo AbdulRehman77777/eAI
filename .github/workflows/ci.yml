@@ -2,10 +2,10 @@ name: CI — eAI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master]
     tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   # ── C/C++ Tests ───────────────────────────────────────────────────────────
@@ -43,8 +43,7 @@ jobs:
           python-version: "3.11"
       - name: Install & test
         run: |
-          pip install pytest pytest-cov
-          pip install -r requirements.txt 2>/dev/null || true
+          pip install pytest pytest-cov numpy
           python -m pytest tests/ -v --tb=short --cov=. --cov-report=xml
       - uses: codecov/codecov-action@v4
         with:

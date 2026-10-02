@@ -338,8 +338,9 @@ static eai_status_t stub_load_model(eai_runtime_t *rt,
                         free(buf);
                     }
                 } else {
+                    /* Short read: fp was already closed after fread above;
+                       fall through to the stub fallback below. */
                     free(buf);
-                    fclose(fp);
                 }
             } else {
                 fclose(fp);

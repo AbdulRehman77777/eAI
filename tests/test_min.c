@@ -3,6 +3,7 @@
 // ISO/IEC 25000 | ISO/IEC/IEEE 15288:2023
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "eai/common.h"
 #include "eai_min/eai_min.h"
@@ -53,12 +54,76 @@ static void test_router_mode(void)
     PASS();
 }
 
+/* Issue #43: stub_load_model closed the model FILE twice on the short-read
+ * path (fclose after fread, then fclose again in the else branch) -- undefined
+ * behavior. The fix removes the second close. A short read is not
+ * deterministically triggerable with a regular file, so these pin the
+ * observable contract instead: any unreadable/unparseable model falls back
+ * to stub mode cleanly (EAI_OK, runtime usable), with no crash or UB.
+ * Under ASan the old double-close is caught if the path executes. */
+static void write_garbage_file(const char *path, size_t nbytes)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) { FAIL("could not create garbage model file"); return; }
+    for (size_t i = 0; i < nbytes; i++) fputc((int)(i & 0xFF), f);
+    fclose(f);
+}
+
+static void test_load_model_fallback(const char *label, const char *model_path)
+{
+    TEST(load_fallback);
+    eai_min_runtime_t rt;
+    eai_status_t st = eai_min_runtime_create(&rt, EAI_RUNTIME_ONNX);
+    if (st != EAI_OK) { FAIL("runtime create failed"); return; }
+
+    eai_model_manifest_t manifest;
+    memset(&manifest, 0, sizeof(manifest));
+    strncpy(manifest.name, "fallback-test", sizeof(manifest.name) - 1);
+
+    st = eai_min_runtime_load(&rt, model_path, &manifest);
+    if (st != EAI_OK) { FAIL("load did not fall back to stub cleanly"); return; }
+    if (!rt.base.loaded) { FAIL("runtime not marked loaded after fallback"); return; }
+
+    /* The runtime must still be usable after the fallback. */
+    char out[64];
+    st = eai_min_runtime_infer(&rt, "hello", out, sizeof(out));
+    if (st != EAI_OK) { FAIL("infer failed after fallback load"); return; }
+
+    eai_min_runtime_destroy(&rt);
+    printf("(%s) ", label);
+    PASS();
+}
+
+static void test_load_unparseable_model_falls_back(void)
+{
+    const char *path = "test_min_garbage.eaim";
+    write_garbage_file(path, 1024);
+    test_load_model_fallback("unparseable", path);
+    remove(path);
+}
+
+static void test_load_missing_model_falls_back(void)
+{
+    test_load_model_fallback("missing", "test_min_does_not_exist.eaim");
+}
+
+static void test_load_empty_model_falls_back(void)
+{
+    const char *path = "test_min_empty.eaim";
+    write_garbage_file(path, 0);
+    test_load_model_fallback("empty", path);
+    remove(path);
+}
+
 int main(void)
 {
     printf("=== EAI Min Tests ===\n");
 
     test_memory_lite();
     test_router_mode();
+    test_load_unparseable_model_falls_back();
+    test_load_missing_model_falls_back();
+    test_load_empty_model_falls_back();
 
     printf("\nResults: %d/%d passed, %d failed\n", tests_passed, tests_run, tests_failed);
     return tests_failed > 0 ? 1 : 0;
